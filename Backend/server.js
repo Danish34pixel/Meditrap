@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -60,6 +61,9 @@ app.use('/api/stockist', stockistRoutes);
 app.use('/api/medicine', medicineRoutes);
 app.use('/api/company', companyRoutes);
 app.use('/api/upload', uploadRoutes);
+
+// Serve uploaded files statically so URLs like /uploads/<file> are reachable
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

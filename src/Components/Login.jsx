@@ -1,5 +1,5 @@
 // Login.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import {
   View,
   Text,
@@ -22,9 +22,105 @@ import {
   CheckCircle,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+/* --- put styles FIRST so it's in scope everywhere --- */
+const styles = StyleSheet.create({
+  container: { flex: 1, paddingHorizontal: 20 },
+  logoContainer: { alignItems: 'center', marginBottom: 20 },
+  title: { fontSize: 22, fontWeight: '600', color: '#111827', marginTop: 10 },
+  subtitle: { fontSize: 14, color: '#6b7280' },
+  inputContainer: { marginBottom: 15 },
+  label: { fontSize: 14, fontWeight: '500', color: '#374151', marginBottom: 5 },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderColor: '#d1d5db',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  input: { flex: 1, color: '#111827' },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  remember: { fontSize: 14, color: '#374151' },
+  forgot: { fontSize: 14, color: '#3b82f6' },
+  button: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  buttonText: { color: '#fff', fontWeight: '600' },
+  messageBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  successBox: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+    borderWidth: 1,
+  },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+    borderWidth: 1,
+  },
+  signupLink: { color: '#3b82f6', marginTop: 4 },
+});
+
+/* memoized input so focus doesn't get stolen */
+const InputField = memo(function InputField({
+  icon: Icon,
+  label,
+  placeholder,
+  value,
+  onChangeText,
+  secureTextEntry,
+  showPasswordToggle = false,
+  onTogglePassword,
+  ...rest
+}) {
+  return (
+    <View style={styles.inputContainer}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.inputWrapper}>
+        <Icon color="#6b7280" size={20} style={{ marginRight: 8 }} />
+        <TextInput
+          style={styles.input}
+          placeholder={placeholder}
+          placeholderTextColor="#9ca3af"
+          value={String(value ?? '')}
+          onChangeText={onChangeText}
+          secureTextEntry={secureTextEntry}
+          returnKeyType="next"
+          {...rest}
+        />
+        {showPasswordToggle && (
+          <TouchableOpacity onPress={onTogglePassword}>
+            {secureTextEntry ? (
+              <Eye size={20} color="#6b7280" />
+            ) : (
+              <EyeOff size={20} color="#6b7280" />
+            )}
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+});
 
 export default function Login() {
   const navigation = useNavigation();
+  const API_BASE = 'http://10.0.2.2:5000';
   const [form, setForm] = useState({ email: '', password: '' });
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -40,58 +136,53 @@ export default function Login() {
     }).start();
   }, []);
 
-  const handleChange = (name, value) => {
-    setForm({ ...form, [name]: value });
-  };
+  const handleChange = useCallback((name, value) => {
+    setForm(prev => ({ ...prev, [name]: value }));
+  }, []);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setIsLoading(true);
     setMessage('');
-
-    // Simulate login process
-    setTimeout(() => {
-      if (form.email && form.password) {
-        setMessage('Login successful!');
-        setTimeout(() => navigation.navigate('dashboard'), 1000);
-      } else {
+    try {
+      if (!form.email || !form.password) {
         setMessage('Please enter both email and password.');
+        setIsLoading(false);
+        return;
       }
-      setIsLoading(false);
-    }, 1000);
-  };
 
-  const InputField = ({
-    icon: Icon,
-    label,
-    name,
-    placeholder,
-    secureTextEntry,
-    showPasswordToggle = false,
-  }) => (
-    <View style={styles.inputContainer}>
-      <Text style={styles.label}>{label}</Text>
-      <View style={styles.inputWrapper}>
-        <Icon color="#6b7280" size={20} style={{ marginRight: 8 }} />
-        <TextInput
-          style={styles.input}
-          placeholder={placeholder}
-          placeholderTextColor="#9ca3af"
-          secureTextEntry={showPasswordToggle ? !showPassword : secureTextEntry}
-          value={form[name]}
-          onChangeText={value => handleChange(name, value)}
-        />
-        {showPasswordToggle && (
-          <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-            {showPassword ? (
-              <EyeOff size={20} color="#6b7280" />
-            ) : (
-              <Eye size={20} color="#6b7280" />
-            )}
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
-  );
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: form.email, password: form.password }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        setMessage(json.message || 'Login failed. Check credentials.');
+        setIsLoading(false);
+        return;
+      }
+
+      // support multiple response shapes
+      const token =
+        json.token || json.data?.token || (json.user && json.token) || null;
+      const user = json.user || json.data?.user || json.user || json;
+
+      try {
+        if (token) await AsyncStorage.setItem('token', token);
+        if (user) await AsyncStorage.setItem('user', JSON.stringify(user));
+      } catch (e) {
+        // ignore storage errors
+      }
+
+      setMessage('Login successful!');
+      setTimeout(() => navigation.navigate('dashboard'), 600);
+    } catch (e) {
+      setMessage(e.message || 'Login failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <LinearGradient
@@ -100,6 +191,7 @@ export default function Login() {
     >
       <ScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+        keyboardShouldPersistTaps="handled"
       >
         <Animated.View
           style={{
@@ -125,23 +217,28 @@ export default function Login() {
             <Text style={styles.subtitle}>Sign in to your MedTrap account</Text>
           </View>
 
-          {/* Input Fields */}
           <InputField
             icon={Mail}
             label="Email Address"
-            name="email"
             placeholder="Enter your email address"
+            value={form.email}
+            onChangeText={v => handleChange('email', v)}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            autoCorrect={false}
           />
+
           <InputField
             icon={Lock}
             label="Password"
-            name="password"
             placeholder="Enter your password"
-            secureTextEntry
+            value={form.password}
+            onChangeText={v => handleChange('password', v)}
+            secureTextEntry={!showPassword}
             showPasswordToggle
+            onTogglePassword={() => setShowPassword(s => !s)}
           />
 
-          {/* Remember me + Forgot password */}
           <View style={styles.row}>
             <Text style={styles.remember}>Remember me</Text>
             <TouchableOpacity>
@@ -149,7 +246,6 @@ export default function Login() {
             </TouchableOpacity>
           </View>
 
-          {/* Sign In Button */}
           <TouchableOpacity
             style={styles.button}
             onPress={handleSubmit}
@@ -162,7 +258,6 @@ export default function Login() {
             )}
           </TouchableOpacity>
 
-          {/* Message */}
           {message !== '' && (
             <View
               style={[
@@ -191,7 +286,6 @@ export default function Login() {
             </View>
           )}
 
-          {/* Create Account */}
           <View style={{ marginTop: 20, alignItems: 'center' }}>
             <Text>New to MedTrap?</Text>
             <TouchableOpacity onPress={() => navigation.navigate('signup')}>
@@ -199,7 +293,6 @@ export default function Login() {
             </TouchableOpacity>
           </View>
 
-          {/* Footer */}
           <View style={{ marginTop: 20, alignItems: 'center' }}>
             <Text style={{ fontSize: 12, color: '#6b7280' }}>
               🔒 Protected by industry-standard security measures
@@ -210,91 +303,3 @@ export default function Login() {
     </LinearGradient>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  logoContainer: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: '#111827',
-    marginTop: 10,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  inputContainer: {
-    marginBottom: 15,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    marginBottom: 5,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderColor: '#d1d5db',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  input: {
-    flex: 1,
-    color: '#111827',
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  remember: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  forgot: {
-    fontSize: 14,
-    color: '#3b82f6',
-  },
-  button: {
-    backgroundColor: '#3b82f6',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  messageBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
-    borderRadius: 8,
-    marginTop: 10,
-  },
-  successBox: {
-    backgroundColor: '#ecfdf5',
-    borderColor: '#a7f3d0',
-    borderWidth: 1,
-  },
-  errorBox: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-    borderWidth: 1,
-  },
-  signupLink: {
-    color: '#3b82f6',
-    marginTop: 4,
-  },
-});

@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { protect } = require('../middleware/auth');
+const cloudinary = require('cloudinary').v2;
 const ErrorResponse = require('../utils/errorResponse');
 
 const router = express.Router();
@@ -48,14 +49,52 @@ const upload = multer({
 
 // @desc    Upload single image
 // @route   POST /api/upload/image
-// @access  Private
-router.post('/image', protect, upload.single('image'), (req, res) => {
+// @access  Public (allow uploads during onboarding)
+router.post('/image', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
         success: false,
         message: 'Please upload a file',
       });
+    }
+
+    // If Cloudinary is configured, upload to Cloudinary and remove local file
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+    let resultUrl = `/uploads/${req.file.filename}`;
+    let publicId = null;
+
+    if (cloudName && apiKey && apiSecret) {
+      try {
+        cloudinary.config({
+          cloud_name: cloudName,
+          api_key: apiKey,
+          api_secret: apiSecret,
+        });
+
+        const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+          folder: process.env.CLOUDINARY_UPLOAD_FOLDER || 'medtek',
+        });
+
+        resultUrl = uploadResult.secure_url;
+        publicId = uploadResult.public_id;
+
+        // delete local file
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (e) {
+          console.warn('Failed to delete local upload file:', e.message);
+        }
+      } catch (cloudErr) {
+        console.error(
+          'Cloudinary upload failed, falling back to local file:',
+          cloudErr.message,
+        );
+        // keep local URL as fallback
+      }
     }
 
     res.json({
@@ -67,7 +106,8 @@ router.post('/image', protect, upload.single('image'), (req, res) => {
         mimetype: req.file.mimetype,
         size: req.file.size,
         path: req.file.path,
-        url: `/uploads/${req.file.filename}`,
+        url: resultUrl,
+        public_id: publicId,
       },
     });
   } catch (error) {
@@ -81,8 +121,8 @@ router.post('/image', protect, upload.single('image'), (req, res) => {
 
 // @desc    Upload multiple images
 // @route   POST /api/upload/images
-// @access  Private
-router.post('/images', protect, upload.array('images', 10), (req, res) => {
+// @access  Public
+router.post('/images', upload.array('images', 10), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({
@@ -91,14 +131,54 @@ router.post('/images', protect, upload.array('images', 10), (req, res) => {
       });
     }
 
-    const uploadedFiles = req.files.map(file => ({
-      filename: file.filename,
-      originalname: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size,
-      path: file.path,
-      url: `/uploads/${file.filename}`,
-    }));
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+    const uploadedFiles = await Promise.all(
+      req.files.map(async file => {
+        let resultUrl = `/uploads/${file.filename}`;
+        let publicId = null;
+
+        if (cloudName && apiKey && apiSecret) {
+          try {
+            cloudinary.config({
+              cloud_name: cloudName,
+              api_key: apiKey,
+              api_secret: apiSecret,
+            });
+
+            const uploadResult = await cloudinary.uploader.upload(file.path, {
+              folder: process.env.CLOUDINARY_UPLOAD_FOLDER || 'medtek',
+            });
+
+            resultUrl = uploadResult.secure_url;
+            publicId = uploadResult.public_id;
+
+            try {
+              fs.unlinkSync(file.path);
+            } catch (e) {
+              console.warn('Failed to delete local upload file:', e.message);
+            }
+          } catch (cloudErr) {
+            console.error(
+              'Cloudinary upload failed for a file, using local copy:',
+              cloudErr.message,
+            );
+          }
+        }
+
+        return {
+          filename: file.filename,
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          path: file.path,
+          url: resultUrl,
+          public_id: publicId,
+        };
+      }),
+    );
 
     res.json({
       success: true,
