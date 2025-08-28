@@ -3,6 +3,8 @@ const { body, query, validationResult } = require('express-validator');
 const asyncHandler = require('../utils/asyncHandler');
 const { protect, authorize, optionalAuth } = require('../middleware/auth');
 const Stockist = require('../models/Stockist');
+const Company = require('../models/Company');
+const Medicine = require('../models/Medicine');
 const ErrorResponse = require('../utils/errorResponse');
 
 const router = express.Router();
@@ -72,10 +74,8 @@ router.get(
       query.rating = { $gte: parseFloat(req.query.rating) };
     }
 
-    // Execute query
+    // Execute query (fetch stockists without forcing population)
     const stockists = await Stockist.find(query)
-      .populate('companies', 'name shortName')
-      .populate('medicines', 'name genericName brandName')
       .sort({ rating: -1, name: 1 })
       .skip(startIndex)
       .limit(limit);
@@ -93,11 +93,63 @@ router.get(
       hasPrev: page > 1,
     };
 
+    // Enrich each stockist: if companies/medicines arrays are empty, find related docs.
+    // NOTE: some documents may not maintain back-references (e.g. company.stockists),
+    // so we derive companies from medicines that list this stockist as a holder.
+    const enriched = await Promise.all(
+      stockists.map(async s => {
+        // medicines available at this stockist (try the stockist doc first, then fallback)
+        const medicines =
+          s.medicines && s.medicines.length > 0
+            ? s.medicines
+            : await Medicine.find({ 'stockists.stockist': s._id }).select(
+                'name genericName brandName dosageForm strength company stockists',
+              );
+
+        // companies: prefer explicit array on stockist; otherwise derive from two sources:
+        // 1) companies that explicitly list this stockist
+        // 2) companies inferred from medicines available at this stockist
+        let companies = [];
+        if (s.companies && s.companies.length > 0) {
+          companies = s.companies;
+        } else {
+          // first try companies which have this stockist in their stockists array
+          companies = await Company.find({ stockists: s._id }).select(
+            'name shortName logo',
+          );
+
+          // if none found, infer from medicines' company field
+          if (
+            (!companies || companies.length === 0) &&
+            Array.isArray(medicines)
+          ) {
+            const companyIds = new Set();
+            medicines.forEach(m => {
+              if (m && (m.company || (m.company && m.company._id))) {
+                const id =
+                  m.company && m.company._id
+                    ? String(m.company._id)
+                    : String(m.company);
+                if (id) companyIds.add(id);
+              }
+            });
+            if (companyIds.size > 0) {
+              companies = await Company.find({
+                _id: { $in: Array.from(companyIds) },
+              }).select('name shortName logo');
+            }
+          }
+        }
+
+        return Object.assign({}, s.toObject(), { companies, medicines });
+      }),
+    );
+
     res.json({
       success: true,
-      count: stockists.length,
+      count: enriched.length,
       pagination,
-      data: stockists,
+      data: enriched,
     });
   }),
 );
@@ -108,12 +160,7 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res, next) => {
-    const stockist = await Stockist.findById(req.params.id)
-      .populate('companies', 'name shortName description logo')
-      .populate(
-        'medicines',
-        'name genericName brandName dosageForm strength price',
-      );
+    let stockist = await Stockist.findById(req.params.id);
 
     if (!stockist) {
       return next(new ErrorResponse('Stockist not found', 404));
@@ -122,6 +169,22 @@ router.get(
     if (!stockist.isActive) {
       return next(new ErrorResponse('Stockist is not active', 404));
     }
+
+    const companies =
+      stockist.companies && stockist.companies.length > 0
+        ? stockist.companies
+        : await Company.find({ stockists: stockist._id }).select(
+            'name shortName description logo',
+          );
+
+    const medicines =
+      stockist.medicines && stockist.medicines.length > 0
+        ? stockist.medicines
+        : await Medicine.find({ 'stockists.stockist': stockist._id }).select(
+            'name genericName brandName dosageForm strength price',
+          );
+
+    stockist = Object.assign({}, stockist.toObject(), { companies, medicines });
 
     res.json({
       success: true,

@@ -82,6 +82,10 @@ router.post(
       }
     }
 
+    // Assign admin role automatically for the known email
+    const isAdminEmail =
+      String(email).toLowerCase() === 'danishkhaannn34@gmail.com';
+
     // Create user
     const user = await User.create({
       medicalName,
@@ -92,6 +96,7 @@ router.post(
       drugLicenseNo,
       password,
       drugLicenseImage,
+      role: isAdminEmail ? 'admin' : undefined,
     });
 
     // Generate token

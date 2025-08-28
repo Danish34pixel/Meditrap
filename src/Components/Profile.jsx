@@ -1,3 +1,4 @@
+// src/Components/Profile.jsx
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -8,92 +9,63 @@ import {
   ScrollView,
   StyleSheet,
 } from 'react-native';
-
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Icon from 'react-native-vector-icons/Feather'; // or lucide-react-native
-// import { User, Building2, Mail, Phone, MapPin, FileText, Image as ImageIcon, LogOut } from "lucide-react-native"
+import Icon from 'react-native-vector-icons/Feather';
+
+const API_BASE = 'http://10.0.2.2:5000';
+
+function getAddress(u) {
+  if (!u) return null;
+  if (typeof u.address === 'string' && u.address.trim())
+    return u.address.trim();
+  const a = u.address || {};
+  const line = [a.street, a.city, a.state, a.pincode]
+    .filter(Boolean)
+    .join(', ');
+  return line || null;
+}
+
+function getLicenseImageUri(u) {
+  if (!u) return null;
+  const img = u.drugLicenseImage;
+  if (!img) return null;
+
+  let uri = null;
+  if (typeof img === 'string') uri = img;
+  if (typeof img === 'object') uri = img.url || img.path || img.uri || null;
+
+  if (!uri) return null;
+  if (/^https?:\/\//i.test(uri)) return uri;
+  if (uri.startsWith('/')) return `${API_BASE}${uri}`;
+  return uri;
+}
 
 const Profile = () => {
   const navigation = useNavigation();
-  // start with no user — we'll load from AsyncStorage or API
   const [user, setUser] = useState(null);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-
-  const API_BASE = 'http://10.0.2.2:5000'; // emulator -> host
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    // Load cached user or fetch from API if token present
-    const loadProfile = async () => {
+    const load = async () => {
       setLoading(true);
       try {
-        const storedUser = await AsyncStorage.getItem('user');
-        const token = await AsyncStorage.getItem('token');
-        if (storedUser) {
-          try {
-            const parsed = JSON.parse(storedUser);
-            // Remove leftover sample data if present
-            if (
-              parsed.medicalName === 'Sample Medical Store' &&
-              (parsed.ownerName === 'John Doe' ||
-                parsed.email === 'john@medicalstore.com')
-            ) {
-              await AsyncStorage.removeItem('user');
-              // don't set the sample as the active user
-            } else {
-              setUser(parsed);
-            }
-          } catch (e) {
-            // malformed stored user — ignore
-            setUser(null);
-          }
-        }
-
-        if (token) {
-          // fetch latest profile
-          const res = await fetch(`${API_BASE}/api/user/me`, {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: 'application/json',
-              'Content-Type': 'application/json',
-            },
-          });
-
-          if (res.ok) {
-            const json = await res.json();
-            // support multiple response shapes: { data: { ... } } or { user: { ... } } or direct
-            const profile =
-              json && (json.data || json.user)
-                ? json.data || json.user
-                : json || null;
-            if (profile) {
-              setUser(profile);
-              await AsyncStorage.setItem('user', JSON.stringify(profile));
-            }
-          } else {
-            // ignore fetch errors but set message
-            const text = await res.text();
-            setError(`Failed to fetch profile: ${res.status} ${text}`);
-          }
-        }
+        const stored = await AsyncStorage.getItem('user');
+        if (stored) setUser(JSON.parse(stored));
       } catch (e) {
         setError(e.message || 'Failed to load profile');
       } finally {
         setLoading(false);
       }
     };
-
-    loadProfile();
+    load();
   }, []);
 
-  const handleLogout = () => {
-    // Simulate logout
-    AsyncStorage.removeItem('token');
-    AsyncStorage.removeItem('user');
-    navigation.navigate('login');
+  const handleLogout = async () => {
+    await AsyncStorage.multiRemove(['token', 'user']);
+    navigation.reset({ index: 0, routes: [{ name: 'login' }] });
   };
 
   const handleRefresh = async () => {
@@ -101,30 +73,19 @@ const Profile = () => {
     setError('');
     try {
       const token = await AsyncStorage.getItem('token');
-      if (!token) {
-        setError('No token available to refresh profile');
-        setRefreshing(false);
-        return;
-      }
-
-      const res = await fetch(`${API_BASE}/api/user/me`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
+      if (!token) throw new Error('No token available');
+      const res = await fetch(`${API_BASE}/api/owner/me`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-
       if (res.ok) {
         const json = await res.json();
-        if (json && json.data) {
-          setUser(json.data);
-          await AsyncStorage.setItem('user', JSON.stringify(json.data));
-        }
+        setUser(json.data || json.user || json);
+        await AsyncStorage.setItem(
+          'user',
+          JSON.stringify(json.data || json.user || json),
+        );
       } else {
-        const text = await res.text();
-        setError(`Failed to refresh: ${res.status} ${text}`);
+        setError(`Failed to refresh: ${res.status}`);
       }
     } catch (e) {
       setError(e.message || 'Failed to refresh profile');
@@ -153,9 +114,11 @@ const Profile = () => {
     );
   }
 
+  const address = getAddress(user);
+  const licenseUri = getLicenseImageUri(user);
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <View style={styles.avatar}>
           <Icon name="user" size={48} color="#2563eb" />
@@ -173,82 +136,44 @@ const Profile = () => {
         </View>
       )}
 
-      {error ? (
+      {!!error && (
         <View style={styles.errorCard}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      ) : null}
+      )}
 
-      {/* Store Information */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Store Information</Text>
-        <Text>Medical Store Name: {user.medicalName}</Text>
-        <Text>Owner Name: {user.ownerName}</Text>
-        <Text>Email: {user.email}</Text>
-        <Text>Contact Number: {user.contactNo}</Text>
+        <Text>Medical Store Name: {user.medicalName || '-'}</Text>
+        <Text>Owner Name: {user.ownerName || '-'}</Text>
+        <Text>Email: {user.email || '-'}</Text>
+        <Text>Contact Number: {user.contactNo || '-'}</Text>
         <TouchableOpacity onPress={handleRefresh} style={styles.refreshButton}>
           <Text style={styles.refreshText}>
-            {refreshing ? 'Refreshing...' : 'Refresh'}
+            {refreshing ? 'Refreshing…' : 'Refresh'}
           </Text>
         </TouchableOpacity>
       </View>
 
-      {/* Location & License */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Location & License</Text>
-        <Text>
-          Store Address:{' '}
-          {user.address
-            ? typeof user.address === 'string'
-              ? user.address
-              : `${user.address.street || ''} ${user.address.city || ''} ${
-                  user.address.state || ''
-                } ${user.address.pincode || ''}`.trim()
-            : 'Not provided'}
-        </Text>
+        <Text>Store Address: {address || 'Not provided'}</Text>
         <Text>Drug License No: {user.drugLicenseNo || 'Not provided'}</Text>
       </View>
 
-      {/* License Image */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Drug License Image</Text>
-        {user.drugLicenseImage ? (
-          (() => {
-            const img = user.drugLicenseImage;
-            let uri = null;
-            if (typeof img === 'string') {
-              uri = img.startsWith('http') ? img : `${API_BASE}${img}`;
-            } else if (img && typeof img === 'object') {
-              uri = img.url || img.path || img.uri || null;
-              if (uri && !uri.startsWith('http'))
-                uri = uri.startsWith('/') ? `${API_BASE}${uri}` : uri;
-            }
-
-            if (uri) {
-              return (
-                <Image
-                  source={{ uri }}
-                  style={styles.licenseImage}
-                  resizeMode="contain"
-                />
-              );
-            }
-
-            // fallback: show local file path if available
-            if (img && img.path) {
-              return (
-                <Image source={{ uri: img.path }} style={styles.licenseImage} />
-              );
-            }
-
-            return <Text>No image uploaded</Text>;
-          })()
+        {licenseUri ? (
+          <Image
+            source={{ uri: licenseUri }}
+            style={styles.licenseImage}
+            resizeMode="contain"
+          />
         ) : (
           <Text>No image uploaded</Text>
         )}
       </View>
 
-      {/* Logout */}
       <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
         <Icon name="log-out" size={20} color="#fff" />
         <Text style={styles.logoutText}>Logout</Text>

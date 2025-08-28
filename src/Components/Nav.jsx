@@ -42,69 +42,105 @@ function Nav({ navigation }) {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [userToken, setUserToken] = useState(null);
 
-  const sectionData = [
-    {
-      title: 'Amit Marketing',
-      phone: '9826000000',
-      address: 'NH Road, Indore',
-      items: ['Leeford', 'Zevintus', 'Cipla', 'Sun Pharma'],
-      Medicines: ['Tramonil-plus', 'Paracetamol', 'Amoxicillin', 'Omeprazole'],
-    },
-    {
-      title: 'Jain Brothers',
-      phone: '9826111111',
-      address: 'MG Road, Bhopal',
-      items: ['Abbott', 'Abb', "Dr. Reddy's", 'Lupin'],
-      Medicines: ['Vomiford-md', 'concor 2.5', 'Azithromycin', 'Metformin'],
-    },
-    {
-      title: 'Vishal Marketing',
-      phone: '9826222222',
-      address: 'Station Road, Ujjain',
-      items: ['Another Brand 1', 'Another Brand 2', 'Glenmark', 'Torrent'],
-      Medicines: ['Dsr', 'Cetirizine', 'Pantoprazole', 'Amlodipine'],
-    },
-    {
-      title: 'Rajesh Marketing',
-      phone: '9826333333',
-      address: 'Main Market, Dewas',
-      items: ['More Products', 'Leeford', 'Zevintus', 'Cadila'],
-      Medicines: ['Ibuprofen', 'Ranitidine', 'Cetirizine', 'Metronidazole'],
-    },
-    {
-      title: 'MediCare Solutions',
-      phone: '9826444444',
-      address: 'Central Plaza, Indore',
-      items: ['Abbott', 'Abb', 'Biocon', 'Wockhardt'],
-      Medicines: ['Insulin', 'Glimepiride', 'Sitagliptin', 'Vildagliptin'],
-    },
-    {
-      title: 'HealthCare Plus',
-      phone: '9826555555',
-      address: 'Business Park, Bhopal',
-      items: ['Another Brand 1', 'Another Brand 2', 'Aurobindo', 'Divis'],
-      Medicines: ['Losartan', 'Telmisartan', 'Olmesartan', 'Valsartan'],
-    },
-    {
-      title: 'Pharma Express',
-      phone: '9826666666',
-      address: 'Industrial Area, Ujjain',
-      items: ['Leeford', 'Zevintus', 'Alkem', 'Intas'],
-      Medicines: ['Atorvastatin', 'Rosuvastatin', 'Simvastatin', 'Pravastatin'],
-    },
-    {
-      title: 'MediLink Distributors',
-      phone: '9826777777',
-      address: 'Trade Center, Dewas',
-      items: ['Cipla', 'Sun Pharma', 'Glenmark', 'Torrent'],
-      Medicines: [
-        'Montelukast',
-        'Levocetirizine',
-        'Fexofenadine',
-        'Desloratadine',
-      ],
-    },
-  ];
+  const [sectionData, setSectionData] = useState([]);
+  // sectionData will come from backend (stockists) — each item should include name/title, phone, address, companies, medicines
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const [resStockist, resMedicine, resCompany] = await Promise.all([
+          fetch('http://10.0.2.2:5000/api/stockist'),
+          fetch('http://10.0.2.2:5000/api/medicine'),
+          fetch('http://10.0.2.2:5000/api/company'),
+        ]);
+
+        const [jsonStockist, jsonMedicine, jsonCompany] = await Promise.all([
+          resStockist.json(),
+          resMedicine.json(),
+          resCompany.json(),
+        ]);
+
+        const medicines = (jsonMedicine && jsonMedicine.data) || [];
+        const companies = (jsonCompany && jsonCompany.data) || [];
+
+        if (mounted && jsonStockist && jsonStockist.data) {
+          const mapped = jsonStockist.data.map(s => {
+            const medsForStockist = medicines
+              .filter(m =>
+                Array.isArray(m.stockists)
+                  ? m.stockists.some(st =>
+                      String(st.stockist || st).includes(String(s._id)),
+                    )
+                  : false,
+              )
+              .map(m => (m.name ? m.name : m.brandName || ''))
+              .filter(Boolean);
+
+            const companyIds = new Set(
+              medicines
+                .filter(m =>
+                  Array.isArray(m.stockists)
+                    ? m.stockists.some(st =>
+                        String(st.stockist || st).includes(String(s._id)),
+                      )
+                    : false,
+                )
+                .map(m =>
+                  m.company && (m.company._id || m.company)
+                    ? String(m.company._id || m.company)
+                    : null,
+                )
+                .filter(Boolean),
+            );
+
+            const companiesForStockist = companies
+              .filter(c => companyIds.has(String(c._id)))
+              .map(c => (c.name ? c.name : c.shortName || ''))
+              .filter(Boolean);
+
+            const items = (s.companies || companiesForStockist)
+              .map(c => {
+                if (typeof c === 'string') {
+                  const found = companies.find(
+                    co => String(co._id) === c || co.id === c,
+                  );
+                  return found ? found.name || found.shortName || c : c;
+                }
+                if (c && (c.name || c.shortName)) return c.name || c.shortName;
+                return '';
+              })
+              .filter(Boolean);
+
+            const meds = (s.medicines || medsForStockist)
+              .map(m =>
+                typeof m === 'string'
+                  ? m
+                  : m && (m.name || m.brandName)
+                  ? m.name || m.brandName
+                  : '',
+              )
+              .filter(Boolean);
+
+            return {
+              _id: s._id,
+              title: s.name,
+              phone: s.phone,
+              address: s.address
+                ? `${s.address.street || ''}, ${s.address.city || ''}`
+                : '',
+              items,
+              Medicines: meds,
+            };
+          });
+          setSectionData(mapped);
+          console.warn('Nav: loaded stockists ->', mapped.length);
+        }
+      } catch (err) {
+        console.warn('Nav: failed to load stockists', err);
+      }
+    })();
+    return () => (mounted = false);
+  }, []);
 
   // Check for token on component mount
   useEffect(() => {
@@ -292,6 +328,39 @@ function Nav({ navigation }) {
   useEffect(() => {
     handleFilterTypeChange('company');
   }, []);
+
+  // When sectionData loads or changes, initialize selectedStockists so the UI shows results
+  useEffect(() => {
+    if (!sectionData || sectionData.length === 0) return;
+
+    // If we already have selectedStockists populated and not empty, keep it
+    if (selectedStockists && selectedStockists.length > 0) return;
+
+    // Populate based on current filterType
+    const allItems = getAllItems(filterType);
+    if (filterType === 'stockist') {
+      setSelectedStockists(sectionData);
+    } else if (filterType === 'company') {
+      const companyStockists = [];
+      allItems.forEach(company => {
+        const stockists = sectionData.filter(
+          section => section.items && section.items.includes(company),
+        );
+        companyStockists.push(...stockists);
+      });
+      setSelectedStockists([...new Set(companyStockists)]);
+    } else if (filterType === 'medicine') {
+      const medicineStockists = [];
+      allItems.forEach(medicine => {
+        const stockists = sectionData.filter(
+          section => section.Medicines && section.Medicines.includes(medicine),
+        );
+        medicineStockists.push(...stockists);
+      });
+      setSelectedStockists([...new Set(medicineStockists)]);
+    }
+    setShowAllResults(true);
+  }, [sectionData]);
 
   const renderStockistCard = ({ item, index }) => (
     <View key={index} style={styles.stockistCard}>
@@ -613,7 +682,9 @@ function Nav({ navigation }) {
               <FlatList
                 data={suggestions}
                 keyExtractor={(item, index) => index.toString()}
-                scrollEnabled={true}
+                nestedScrollEnabled={true}
+                keyboardShouldPersistTaps="handled"
+                style={{ maxHeight: 260 }}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item, index }) => {
                   let phone = null;
@@ -679,6 +750,12 @@ function Nav({ navigation }) {
         </View>
 
         {/* Results Display */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <Text style={{ fontSize: 12, color: '#6B7280' }}>
+            Debug: sectionData = {sectionData.length} stockists
+          </Text>
+        </View>
+
         {selectedStockists.length > 0 && (
           <View style={styles.resultsSection}>
             {/* Loading Indicator */}
@@ -765,8 +842,10 @@ function Nav({ navigation }) {
               data={selectedStockists}
               keyExtractor={(item, index) => index.toString()}
               renderItem={renderStockistCard}
+              nestedScrollEnabled={true}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 16 }}
               showsVerticalScrollIndicator={false}
-              scrollEnabled={true}
             />
           </View>
         )}

@@ -4,6 +4,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { protect, authorize, optionalAuth } = require('../middleware/auth');
 const Medicine = require('../models/Medicine');
 const Company = require('../models/Company');
+const Stockist = require('../models/Stockist');
 const ErrorResponse = require('../utils/errorResponse');
 
 const router = express.Router();
@@ -248,6 +249,51 @@ router.post(
       message: 'Medicine created successfully',
       data: medicine,
     });
+  }),
+);
+
+// @desc    Quick create medicine (minimal fields: name, company, stockists)
+// @route   POST /api/medicine/quick
+// @access  Private (Admin only)
+router.post(
+  '/quick',
+  protect,
+  authorize('admin'),
+  asyncHandler(async (req, res, next) => {
+    const { name, company, stockists } = req.body;
+    if (!name || !company) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'name and company are required' });
+    }
+
+    // set safe defaults for required fields
+    const payload = {
+      name: name.trim(),
+      company,
+      category: 'general',
+      dosageForm: 'tablet',
+      strength: 'standard',
+      packSize: '1x1',
+      price: { mrp: 0 },
+      expiryDate: new Date(
+        new Date().setFullYear(new Date().getFullYear() + 1),
+      ),
+      batchNumber: `BATCH-${Date.now()}`,
+    };
+
+    const medicine = await Medicine.create(payload);
+
+    // attach to stockists if provided
+    if (Array.isArray(stockists) && stockists.length > 0) {
+      // push stockist references into medicine.stockists
+      medicine.stockists = stockists.map(id => ({ stockist: id, stock: 0 }));
+      await medicine.save();
+    }
+
+    res
+      .status(201)
+      .json({ success: true, message: 'Medicine created', data: medicine });
   }),
 );
 

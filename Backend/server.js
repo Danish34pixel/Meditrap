@@ -14,6 +14,7 @@ const stockistRoutes = require('./routes/stockist');
 const medicineRoutes = require('./routes/medicine');
 const companyRoutes = require('./routes/company');
 const uploadRoutes = require('./routes/upload');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -61,6 +62,7 @@ app.use('/api/stockist', stockistRoutes);
 app.use('/api/medicine', medicineRoutes);
 app.use('/api/company', companyRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Serve uploaded files statically so URLs like /uploads/<file> are reachable
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

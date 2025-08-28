@@ -142,7 +142,7 @@ const medicineSchema = new mongoose.Schema(
     ],
     rating: {
       type: Number,
-      min: 1,
+      min: 0,
       max: 5,
       default: 0,
     },
@@ -204,12 +204,25 @@ medicineSchema.virtual('averageRating').get(function () {
 
 // Virtual for total stock
 medicineSchema.virtual('totalStock').get(function () {
-  return this.stockists.reduce((total, item) => total + item.stock, 0);
+  try {
+    const stockists = Array.isArray(this.stockists) ? this.stockists : [];
+    return stockists.reduce(
+      (total, item) => total + (item && item.stock ? item.stock : 0),
+      0,
+    );
+  } catch (err) {
+    return 0;
+  }
 });
 
 // Virtual for isExpired
 medicineSchema.virtual('isExpired').get(function () {
-  return new Date() > this.expiryDate;
+  if (!this.expiryDate) return false;
+  try {
+    return new Date() > new Date(this.expiryDate);
+  } catch (err) {
+    return false;
+  }
 });
 
 // Method to add rating

@@ -3,6 +3,7 @@ const { body, query, validationResult } = require('express-validator');
 const asyncHandler = require('../utils/asyncHandler');
 const { protect, authorize, optionalAuth } = require('../middleware/auth');
 const Company = require('../models/Company');
+const Stockist = require('../models/Stockist');
 const ErrorResponse = require('../utils/errorResponse');
 
 const router = express.Router();
@@ -151,84 +152,39 @@ router.post(
   [
     body('name')
       .trim()
-      .isLength({ min: 2, max: 100 })
-      .withMessage('Name must be between 2 and 100 characters'),
-    body('shortName').optional().trim().isLength({ min: 1, max: 20 }),
-    body('description').optional().trim().isLength({ max: 500 }),
-    body('website')
-      .optional()
-      .isURL()
-      .withMessage('Please provide a valid website URL'),
-    body('contactInfo.phone')
-      .optional()
-      .matches(/^[0-9+\-\s()]+$/),
-    body('contactInfo.email').optional().isEmail().normalizeEmail(),
-    body('contactInfo.address.street').optional().trim().notEmpty(),
-    body('contactInfo.address.city').optional().trim().notEmpty(),
-    body('contactInfo.address.state').optional().trim().notEmpty(),
-    body('contactInfo.address.country').optional().trim().notEmpty(),
-    body('contactInfo.address.pincode').optional().trim(),
-    body('licenseNumber')
-      .trim()
-      .notEmpty()
-      .withMessage('License number is required'),
-    body('licenseExpiry')
-      .isISO8601()
-      .withMessage('Please provide a valid expiry date'),
-    body('category')
-      .isIn(['multinational', 'national', 'regional', 'local'])
-      .withMessage('Invalid category'),
-    body('specializations')
-      .optional()
-      .isArray()
-      .withMessage('Specializations must be an array'),
-    body('specializations.*')
-      .optional()
-      .isIn([
-        'antibiotics',
-        'painkillers',
-        'vitamins',
-        'diabetes',
-        'cardiac',
-        'oncology',
-        'pediatrics',
-        'general',
-      ])
-      .withMessage('Invalid specialization'),
-    body('certifications')
-      .optional()
-      .isArray()
-      .withMessage('Certifications must be an array'),
-    body('certifications.*.name').optional().trim().notEmpty(),
-    body('certifications.*.issuedBy').optional().trim().notEmpty(),
-    body('certifications.*.issuedDate').optional().isISO8601(),
-    body('certifications.*.expiryDate').optional().isISO8601(),
+      .isLength({ min: 1, max: 100 })
+      .withMessage('Name is required and must be under 100 characters'),
+    body('stockists').optional().isArray(),
+    body('stockists.*').optional().isMongoId(),
   ],
   asyncHandler(async (req, res, next) => {
-    // Check for validation errors
+    // validation
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        errors: errors.array(),
-      });
+      return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    // Check if license number already exists
-    const existingCompany = await Company.findOne({
-      licenseNumber: req.body.licenseNumber,
-    });
-    if (existingCompany) {
-      return next(new ErrorResponse('License number already registered', 400));
+    // Create company with provided fields (only required field is name)
+    const createPayload = { name: req.body.name };
+    // copy optional allowed fields if present (e.g., category)
+    if (req.body.category) createPayload.category = req.body.category;
+
+    const company = await Company.create(createPayload);
+
+    // If stockists provided, add this company to each stockist's companies array
+    if (Array.isArray(req.body.stockists) && req.body.stockists.length > 0) {
+      await Stockist.updateMany(
+        { _id: { $in: req.body.stockists } },
+        { $addToSet: { companies: company._id } },
+      );
+      // also attach stockists list on company doc (optional)
+      company.stockists = req.body.stockists;
+      await company.save();
     }
 
-    const company = await Company.create(req.body);
-
-    res.status(201).json({
-      success: true,
-      message: 'Company created successfully',
-      data: company,
-    });
+    res
+      .status(201)
+      .json({ success: true, message: 'Company created', data: company });
   }),
 );
 

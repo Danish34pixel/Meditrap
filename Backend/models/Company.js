@@ -52,13 +52,14 @@ const companySchema = new mongoose.Schema(
     },
     licenseNumber: {
       type: String,
-      required: [true, 'License number is required'],
-      unique: true,
+      // optional now: admins can create a company with just a name and add license later
+      // uniqueness is enforced by a sparse unique index defined below so that
+      // multiple documents without a licenseNumber (null/undefined) are allowed.
       uppercase: true,
     },
     licenseExpiry: {
       type: Date,
-      required: [true, 'License expiry date is required'],
+      // optional
     },
     category: {
       type: String,
@@ -98,7 +99,7 @@ const companySchema = new mongoose.Schema(
     },
     rating: {
       type: Number,
-      min: 1,
+      min: 0,
       max: 5,
       default: 0,
     },
@@ -131,6 +132,9 @@ companySchema.index({
   description: 'text',
   specializations: 'text',
 });
+
+// Sparse unique index for licenseNumber: allows many docs without licenseNumber
+companySchema.index({ licenseNumber: 1 }, { unique: true, sparse: true });
 
 // Virtual for average rating
 companySchema.virtual('averageRating').get(function () {

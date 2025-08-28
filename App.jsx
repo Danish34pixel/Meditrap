@@ -5,6 +5,10 @@ import Dashboard from './src/Components/Dashboard';
 import Login from './src/Components/Login';
 import Signup from './src/Components/Signup';
 import Profile from './src/Components/Profile';
+import AdminPanel from './src/Components/AdminPanel';
+import AdminCreateStockist from './src/Components/AdminCreateStockist';
+import AdminCreateCompany from './src/Components/AdminCreateCompany';
+import AdminCreateMedicine from './src/Components/AdminCreateMedicine';
 
 const Stack = createNativeStackNavigator();
 
@@ -16,6 +20,26 @@ export default function App() {
         <Stack.Screen name="login" component={Login} />
         <Stack.Screen name="signup" component={Signup} />
         <Stack.Screen name="profile" component={Profile} />
+        <Stack.Screen
+          name="adminPanel"
+          component={AdminPanel}
+          options={{ title: 'Admin Panel' }}
+        />
+        <Stack.Screen
+          name="adminCreateStockist"
+          component={AdminCreateStockist}
+          options={{ title: 'Create Stockist' }}
+        />
+        <Stack.Screen
+          name="adminCreateCompany"
+          component={AdminCreateCompany}
+          options={{ title: 'Create Company' }}
+        />
+        <Stack.Screen
+          name="adminCreateMedicine"
+          component={AdminCreateMedicine}
+          options={{ title: 'Create Medicine' }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );

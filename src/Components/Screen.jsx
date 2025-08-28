@@ -10,65 +10,139 @@ import {
   StatusBar,
   Linking,
   StyleSheet,
+  FlatList,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 
 const Screen = ({ navigation }) => {
   const [selectedSection, setSelectedSection] = useState(null);
   const [isMobile, setIsMobile] = useState(true); // Always mobile in React Native
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const sectionData = [
-    {
-      title: 'Amit Marketing',
-      phone: '9826000000',
-      address: 'NH Road, Indore',
-      image: 'https://via.placeholder.com/600x400',
-      items: ['Leeford', 'Zevintus'],
-      Medicines: ['Tramonil-plus'],
-    },
-    {
-      title: 'Jain Brothers',
-      phone: '9826111111',
-      address: 'MG Road, Bhopal',
-      items: ['Abbott', 'Abb'],
-      Medicines: ['Vomiford-md'],
-    },
-    {
-      title: 'Vishal Marketing',
-      phone: '9826222222',
-      address: 'Station Road, Ujjain',
-      items: ['Another Brand 1', 'Another Brand 2'],
-      Medicines: ['Dsr', 'Tramonil-plus'],
-    },
-    {
-      title: 'Rajesh Marketing',
-      phone: '9826333333',
-      address: 'Main Market, Dewas',
-      items: ['More Products', 'Leeford', 'Zevintus'],
-    },
-    {
-      title: 'Amit Marketing 2',
-      phone: '9826000000',
-      address: 'NH Road, Indore',
-      items: ['Leeford', 'Zevintus'],
-    },
-    {
-      title: 'Jain Brothers 2',
-      phone: '9826444444',
-      address: 'MG Road, Bhopal',
-      items: ['Abbott', 'Abb'],
-    },
-    {
-      title: 'Vishal Marketing 2',
-      phone: '9826555555',
-      address: 'Station Road, Ujjain',
-      items: ['Another Brand 1', 'Another Brand 2'],
-    },
-  ];
+  const [sectionData, setSectionData] = useState([]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const [resStockist, resMedicine, resCompany] = await Promise.all([
+          fetch('http://10.0.2.2:5000/api/stockist'),
+          fetch('http://10.0.2.2:5000/api/medicine'),
+          fetch('http://10.0.2.2:5000/api/company'),
+        ]);
+
+        const [jsonStockist, jsonMedicine, jsonCompany] = await Promise.all([
+          resStockist.json(),
+          resMedicine.json(),
+          resCompany.json(),
+        ]);
+
+        const medicines = (jsonMedicine && jsonMedicine.data) || [];
+        const companies = (jsonCompany && jsonCompany.data) || [];
+
+        if (mounted && jsonStockist && jsonStockist.data) {
+          const mapped = jsonStockist.data.map(s => {
+            // medicines available at this stockist (med.stockists contains stockist refs)
+            const medsForStockist = medicines
+              .filter(m =>
+                Array.isArray(m.stockists)
+                  ? m.stockists.some(st =>
+                      String(st.stockist || st).includes(String(s._id)),
+                    )
+                  : false,
+              )
+              .map(m => (m.name ? m.name : m.brandName || ''))
+              .filter(Boolean);
+
+            // companies for this stockist derived from medicines' company field
+            const companyIds = new Set(
+              medicines
+                .filter(m =>
+                  Array.isArray(m.stockists)
+                    ? m.stockists.some(st =>
+                        String(st.stockist || st).includes(String(s._id)),
+                      )
+                    : false,
+                )
+                .map(m =>
+                  m.company && (m.company._id || m.company)
+                    ? String(m.company._id || m.company)
+                    : null,
+                )
+                .filter(Boolean),
+            );
+
+            const companiesForStockist = companies
+              .filter(c => companyIds.has(String(c._id)))
+              .map(c => (c.name ? c.name : c.shortName || ''))
+              .filter(Boolean);
+
+            // fallback to any populated fields on the stockist object
+            const items = (s.companies || companiesForStockist)
+              .map(c => {
+                // If the server returned an ObjectId as a string, try to resolve it to a company name
+                if (typeof c === 'string') {
+                  // look up in companies array
+                  const found = companies.find(
+                    co => String(co._id) === c || co.id === c,
+                  );
+                  return found ? found.name || found.shortName || c : c;
+                }
+                if (c && (c.name || c.shortName)) return c.name || c.shortName;
+                return '';
+              })
+              .filter(Boolean);
+
+            const meds = (s.medicines || medsForStockist)
+              .map(m =>
+                typeof m === 'string'
+                  ? m
+                  : m && (m.name || m.brandName)
+                  ? m.name || m.brandName
+                  : '',
+              )
+              .filter(Boolean);
+
+            return {
+              _id: s._id,
+              title: s.name,
+              phone: s.phone,
+              address: s.address
+                ? `${s.address.street || ''}, ${s.address.city || ''}`
+                : '',
+              image: (s.logo && s.logo.url) || null,
+              items,
+              Medicines: meds,
+            };
+          });
+
+          console.warn('Screen: loaded stockists ->', mapped.length);
+          setSectionData(mapped);
+        }
+      } catch (err) {
+        console.warn('Screen: failed to load stockists', err);
+      }
+    })();
+    return () => (mounted = false);
+  }, []);
 
   const filteredSections = sectionData;
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const userStr = await AsyncStorage.getItem('user');
+        if (!userStr) return;
+        const user = JSON.parse(userStr);
+        setIsAdmin(user && user.role === 'admin');
+      } catch (err) {
+        console.warn('Screen: error reading user from storage', err);
+      }
+    })();
+  }, []);
 
   const generateRandomColor = index => {
     const colors = [
@@ -158,13 +232,21 @@ const Screen = ({ navigation }) => {
     </TouchableOpacity>
   );
 
-  const renderMainView = () => (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+  const ListHeader = () => (
+    <View>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Marketing Directory</Text>
         <Text style={styles.headerSubtitle}>
           Find the best marketing partners for your business
         </Text>
+        {isAdmin && (
+          <TouchableOpacity
+            style={styles.adminButton}
+            onPress={() => navigation?.navigate('adminPanel')}
+          >
+            <Text style={styles.adminButtonText}>Admin Panel</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.resultsCount}>
@@ -172,14 +254,22 @@ const Screen = ({ navigation }) => {
           {filteredSections.length}{' '}
           {filteredSections.length === 1 ? 'result' : 'results'}
         </Text>
+        <Text style={{ fontSize: 12, color: '#9CA3AF', marginTop: 6 }}>
+          Debug: loaded stockists = {sectionData.length}
+        </Text>
       </View>
+    </View>
+  );
 
-      <View style={styles.cardGrid}>
-        {filteredSections.map((section, index) => renderCard(section, index))}
-      </View>
-
-      <View style={{ height: 100 }} />
-    </ScrollView>
+  const renderMainView = () => (
+    <FlatList
+      data={filteredSections}
+      keyExtractor={(item, index) => item._id || String(index)}
+      ListHeaderComponent={<ListHeader />}
+      renderItem={({ item, index }) => renderCard(item, index)}
+      contentContainerStyle={styles.cardGrid}
+      showsVerticalScrollIndicator={false}
+    />
   );
 
   const renderDetailView = () => {
@@ -674,6 +764,18 @@ const styles = StyleSheet.create({
   bottomNavText: {
     fontSize: 12,
     color: '#6B7280',
+  },
+  adminButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: '#7C3AED',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  adminButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
 });
 
